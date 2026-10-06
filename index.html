@@ -38,6 +38,9 @@
             <div class="col-sm-3">
               <button id="buildForm" class="btn btn-primary w-100">Gerar campos</button>
             </div>
+            <div class="col-sm-3">
+              <button id="loadExample" class="btn btn-outline-secondary w-100">Carregar exemplo</button>
+            </div>
           </div>
         </div>
       </section>
@@ -79,7 +82,19 @@
           <h2 class="h5">Resultado</h2>
           <div id="problemSummary"></div>
           <div id="result" class="mb-3"></div>
-          <canvas id="graphCanvas" width="900" height="500"></canvas>
+          <div class="row g-3">
+            <div class="col-lg-8">
+              <canvas id="graphCanvas" width="900" height="500"></canvas>
+            </div>
+            <div class="col-lg-4">
+              <div id="graphVerticesCard" class="card h-100">
+                <div class="card-body">
+                  <h3 class="h6">Valores da função nos vértices</h3>
+                  <div id="graphVerticesTable" class="table-responsive small text-muted">Resolva pelo Método Gráfico para visualizar os valores.</div>
+                </div>
+              </div>
+            </div>
+          </div>
           <div id="simplexTable" class="table-responsive mt-3"></div>
         </div>
       </section>
