@@ -1,0 +1,14 @@
+body {
+  background-color: #f8f9fa;
+}
+
+#graphCanvas {
+  width: 100%;
+  max-width: 100%;
+  border: 1px solid #ced4da;
+  background: #fff;
+}
+
+.coeff-input {
+  width: 90px;
+}
