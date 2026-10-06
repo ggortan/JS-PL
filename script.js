@@ -6,10 +6,12 @@ const constraintsContainer = document.getElementById("constraintsContainer");
 const resultContainer = document.getElementById("result");
 const problemSummaryContainer = document.getElementById("problemSummary");
 const simplexTableContainer = document.getElementById("simplexTable");
+const graphVerticesTableContainer = document.getElementById("graphVerticesTable");
 const methodGraphicalCheckbox = document.getElementById("methodGraphical");
 const methodSimplexCheckbox = document.getElementById("methodSimplex");
 const methodsHint = document.getElementById("methodsHint");
 const solveSelectedButton = document.getElementById("solveSelected");
+const loadExampleButton = document.getElementById("loadExample");
 const objectiveTitle = document.getElementById("objectiveTitle");
 const canvas = document.getElementById("graphCanvas");
 const ctx = canvas.getContext("2d");
@@ -26,6 +28,7 @@ const graphState = {
 
 document.getElementById("buildForm").addEventListener("click", buildForm);
 solveSelectedButton.addEventListener("click", solveSelectedMethods);
+loadExampleButton.addEventListener("click", loadExampleData);
 
 [varCountInput, constraintCountInput, problemTypeSelect].forEach((el) => {
   el.addEventListener("input", onProblemInputChange);
@@ -52,25 +55,25 @@ function buildForm() {
 
   let objectiveHtml = "<table class='table table-sm align-middle'><thead><tr>";
   for (let i = 0; i < n; i++) {
-    objectiveHtml += `<th>x${i + 1}</th>`;
+    objectiveHtml += `<th>${formatVarHtml(i)}</th>`;
   }
   objectiveHtml += "</tr></thead><tbody><tr>";
   for (let i = 0; i < n; i++) {
-    objectiveHtml += `<td><input type='number' step='any' class='form-control coeff-input objective-coeff' data-index='${i}' value='0'></td>`;
+    objectiveHtml += `<td><input type='number' step='any' class='form-control coeff-input objective-coeff' data-index='${i}' value='1'></td>`;
   }
   objectiveHtml += "</tr></tbody></table>";
   objectiveContainer.innerHTML = objectiveHtml;
 
   let constraintsHtml = "<table class='table table-sm align-middle'><thead><tr>";
   for (let j = 0; j < n; j++) {
-    constraintsHtml += `<th>x${j + 1}</th>`;
+    constraintsHtml += `<th>${formatVarHtml(j)}</th>`;
   }
   constraintsHtml += "<th>Operador</th><th>Valor</th></tr></thead><tbody>";
 
   for (let i = 0; i < m; i++) {
     constraintsHtml += "<tr>";
     for (let j = 0; j < n; j++) {
-      constraintsHtml += `<td><input type='number' step='any' class='form-control coeff-input constraint-coeff' data-row='${i}' data-col='${j}' value='0'></td>`;
+      constraintsHtml += `<td><input type='number' step='any' class='form-control coeff-input constraint-coeff' data-row='${i}' data-col='${j}' value='1'></td>`;
     }
     constraintsHtml += `<td>
       <select class='form-select constraint-sign' data-row='${i}'>
@@ -94,6 +97,39 @@ function buildForm() {
   updateMethodAvailability();
 }
 
+function loadExampleData() {
+  varCountInput.value = 2;
+  constraintCountInput.value = 3;
+  problemTypeSelect.value = "max";
+  buildForm();
+
+  const objective = [3, 5];
+  const constraints = [
+    { coeffs: [1, 0], sign: "<=", rhs: 4 },
+    { coeffs: [0, 2], sign: "<=", rhs: 12 },
+    { coeffs: [3, 2], sign: "<=", rhs: 18 },
+  ];
+
+  objective.forEach((value, i) => {
+    const input = document.querySelector(`.objective-coeff[data-index='${i}']`);
+    if (input) input.value = value;
+  });
+
+  constraints.forEach((constraint, row) => {
+    constraint.coeffs.forEach((value, col) => {
+      const input = document.querySelector(`.constraint-coeff[data-row='${row}'][data-col='${col}']`);
+      if (input) input.value = value;
+    });
+    const sign = document.querySelector(`.constraint-sign[data-row='${row}']`);
+    const rhs = document.querySelector(`.constraint-rhs[data-row='${row}']`);
+    if (sign) sign.value = constraint.sign;
+    if (rhs) rhs.value = constraint.rhs;
+  });
+
+  updateMethodAvailability();
+  solveSelectedMethods();
+}
+
 function onProblemInputChange() {
   updateObjectiveTitle();
   updateMethodAvailability();
@@ -103,6 +139,7 @@ function resetOutputs() {
   resultContainer.innerHTML = "";
   problemSummaryContainer.innerHTML = "";
   simplexTableContainer.innerHTML = "";
+  graphVerticesTableContainer.innerHTML = "Resolva pelo Método Gráfico para visualizar os valores.";
   graphState.data = null;
   graphState.view = null;
   graphState.hoveredPoint = null;
@@ -187,6 +224,7 @@ function solveSelectedMethods() {
     graphState.data = null;
     graphState.view = null;
     clearCanvas();
+    graphVerticesTableContainer.innerHTML = "Método Gráfico desativado.";
   }
 
   if (useSimplex) {
@@ -203,12 +241,12 @@ function renderProblemSummary(problem) {
   const modeLabel = problem.mode === "min" ? "Minimização" : "Maximização";
   const objectiveLabel =
     problem.objective
-      .map((coef, i) => `${formatNumber(coef)}x${i + 1}`)
+      .map((coef, i) => `${formatNumber(coef)}${formatVarText(i)}`)
       .join(" + ") || "0";
 
   const constraintsLabel = problem.constraints
     .map((c) => {
-      const expr = c.coeffs.map((coef, i) => `${formatNumber(coef)}x${i + 1}`).join(" + ");
+      const expr = c.coeffs.map((coef, i) => `${formatNumber(coef)}${formatVarText(i)}`).join(" + ");
       return `<li>${expr} ${signToHtml(c.sign)} ${formatNumber(c.rhs)}</li>`;
     })
     .join("");
@@ -236,6 +274,7 @@ function solveGraphical(problem) {
 
   if (!feasible.length) {
     drawGraph(buildBoundaryLines(graphConstraints), [], [], null, intersections);
+    graphVerticesTableContainer.innerHTML = "Não há vértices viáveis para exibir.";
     return {
       type: "danger",
       message: "Método Gráfico: não foi encontrada região viável para as restrições informadas.",
@@ -254,11 +293,14 @@ function solveGraphical(problem) {
   const hull = convexHull(feasible);
   const lines = buildBoundaryLines(graphConstraints);
   drawGraph(lines, hull, feasible, best, intersections);
+  renderVerticesTable(hull, problem.objective, best);
 
   const verticesHtml = hull.map((p) => `(${p.x.toFixed(3)}, ${p.y.toFixed(3)})`).join(", ");
   return {
     type: "success",
-    message: `Método Gráfico: solução ótima x1=${best.x.toFixed(4)}, x2=${best.y.toFixed(4)}, Z=${best.value.toFixed(4)}.<br>Vértices viáveis: ${verticesHtml || "-"}`,
+    message: `Método Gráfico: solução ótima ${formatVarText(0)}=${best.x.toFixed(4)}, ${formatVarText(
+      1
+    )}=${best.y.toFixed(4)}, Z=${best.value.toFixed(4)}.<br>Vértices viáveis: ${verticesHtml || "-"}`,
   };
 }
 
@@ -275,7 +317,9 @@ function solveSimplex(problem) {
   }
 
   const realValue = problem.mode === "min" ? -simplex.value : simplex.value;
-  const solutionHtml = simplex.solution.map((v, i) => `x${i + 1}=${v.toFixed(4)}`).join(", ");
+  const solutionHtml = simplex.solution
+    .map((v, i) => `${formatVarText(i)}=${v.toFixed(4)}`)
+    .join(", ");
 
   renderSimplexTable(simplex.steps, problem.n, prepared.constraints.length, simplex.solution, realValue);
 
@@ -365,7 +409,7 @@ function runSimplex(objective, constraints) {
       return { ok: false, error: "problema ilimitado (unbounded)." };
     }
 
-    const entering = pivotCol < n ? `x${pivotCol + 1}` : `s${pivotCol - n + 1}`;
+    const entering = pivotCol < n ? formatVarText(pivotCol) : `s${pivotCol - n + 1}`;
     const leaving = `R${pivotRow + 1}`;
 
     pivot(tableau, pivotRow, pivotCol);
@@ -376,7 +420,9 @@ function runSimplex(objective, constraints) {
       pivotRow,
       pivotCol,
       entering,
+      enteringIndex: pivotCol,
       leaving,
+      leavingIndex: pivotRow,
       value: tableau[m][cols - 1],
     });
   }
@@ -459,7 +505,7 @@ function getBasicRow(tableau, column, m) {
 
 function renderSimplexTable(steps, n, m, solution, value) {
   const header = [
-    ...Array.from({ length: n }, (_, i) => `x${i + 1}`),
+    ...Array.from({ length: n }, (_, i) => formatVarHtml(i)),
     ...Array.from({ length: m }, (_, i) => `s${i + 1}`),
     "b",
   ];
@@ -472,13 +518,24 @@ function renderSimplexTable(steps, n, m, solution, value) {
           const cells = row
             .map((valueCell, colIndex) => {
               const isPivotCell = step.pivotRow === rowIndex && step.pivotCol === colIndex;
-              const classes = [isPivotCell ? "pivot-cell" : "", rowLabel === "Z" ? "z-row-cell" : ""]
+              const isPivotRow = step.pivotRow === rowIndex;
+              const isPivotCol = step.pivotCol === colIndex;
+              const isFinalStep = index === steps.length - 1;
+              const isFinalZCell = isFinalStep && rowLabel === "Z" && colIndex === row.length - 1;
+              const classes = [
+                isPivotCell ? "pivot-cell" : "",
+                isPivotRow ? "pivot-row-cell" : "",
+                isPivotCol ? "pivot-col-cell" : "",
+                rowLabel === "Z" ? "z-row-cell" : "",
+                isFinalZCell ? "final-result-cell" : "",
+              ]
                 .filter(Boolean)
                 .join(" ");
               return `<td class='${classes}'>${valueCell.toFixed(4)}</td>`;
             })
             .join("");
-          return `<tr><th>${rowLabel}</th>${cells}</tr>`;
+          const rowClass = index === steps.length - 1 && rowLabel === "Z" ? "final-z-row" : "";
+          return `<tr class='${rowClass}'><th>${rowLabel}</th>${cells}</tr>`;
         })
         .join("");
 
@@ -503,7 +560,7 @@ function renderSimplexTable(steps, n, m, solution, value) {
     })
     .join("");
 
-  const finalVars = solution.map((v, i) => `x${i + 1}=${v.toFixed(4)}`).join(", ");
+  const finalVars = solution.map((v, i) => `${formatVarText(i)}=${v.toFixed(4)}`).join(", ");
   simplexTableContainer.innerHTML = `
     <h3 class='h6'>Evolução do Simplex</h3>
     ${stepsHtml}
@@ -708,7 +765,15 @@ function drawGraphFromState() {
   feasible.forEach((p) => drawPointWithLabel(p, toCanvas, "#0d6efd", 4, false));
 
   if (best) {
-    drawPointWithLabel(best, toCanvas, "#dc3545", 6, true, `Ótimo (${best.x.toFixed(2)}, ${best.y.toFixed(2)})`);
+    drawPointWithLabel(
+      best,
+      toCanvas,
+      "#dc3545",
+      6,
+      true,
+      `Ótimo Z=${best.value.toFixed(2)}`,
+      { x: 10, y: -14 }
+    );
   }
 
   if (graphState.hoveredPoint) {
@@ -763,11 +828,19 @@ function drawAxes(toCanvas, pad, w, h) {
   ctx.stroke();
 
   ctx.fillStyle = "#212529";
-  ctx.fillText("x", w - pad + 8, axisX + 4);
-  ctx.fillText("y", axisY - 8, pad - 8);
+  ctx.fillText(formatVarText(0), w - pad + 8, axisX + 4);
+  ctx.fillText(formatVarText(1), axisY - 8, pad - 8);
 }
 
-function drawPointWithLabel(point, toCanvas, color, radius, showCoords, customLabel = null) {
+function drawPointWithLabel(
+  point,
+  toCanvas,
+  color,
+  radius,
+  showCoords,
+  customLabel = null,
+  labelOffset = { x: 6, y: -6 }
+) {
   const c = toCanvas(point.x, point.y);
   ctx.fillStyle = color;
   ctx.beginPath();
@@ -776,7 +849,11 @@ function drawPointWithLabel(point, toCanvas, color, radius, showCoords, customLa
 
   if (showCoords) {
     ctx.fillStyle = "#212529";
-    ctx.fillText(customLabel || `(${point.x.toFixed(2)}, ${point.y.toFixed(2)})`, c.px + 6, c.py - 6);
+    ctx.fillText(
+      customLabel || `(${point.x.toFixed(2)}, ${point.y.toFixed(2)})`,
+      c.px + labelOffset.x,
+      c.py + labelOffset.y
+    );
   }
 }
 
@@ -927,10 +1004,59 @@ function setResultMessages(messages) {
     .join("");
 }
 
+function renderVerticesTable(vertices, objective, best) {
+  if (!vertices.length) {
+    graphVerticesTableContainer.innerHTML = "Não há vértices viáveis para exibir.";
+    return;
+  }
+
+  const rows = vertices
+    .map((point) => {
+      const value = objective[0] * point.x + objective[1] * point.y;
+      const isBest = best && Math.abs(best.x - point.x) < 1e-6 && Math.abs(best.y - point.y) < 1e-6;
+      return `
+        <tr class='${isBest ? "table-success best-vertex-row" : ""}'>
+          <td>${point.x.toFixed(3)}</td>
+          <td>${point.y.toFixed(3)}</td>
+          <td>${value.toFixed(3)}</td>
+          <td>${isBest ? "Ótimo" : "Viável"}</td>
+        </tr>
+      `;
+    })
+    .join("");
+
+  graphVerticesTableContainer.innerHTML = `
+    <table class='table table-sm table-bordered align-middle mb-0'>
+      <thead>
+        <tr>
+          <th>${formatVarHtml(0)}</th>
+          <th>${formatVarHtml(1)}</th>
+          <th>Z</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `;
+}
+
 function signToHtml(sign) {
   if (sign === "<=") return "&le;";
   if (sign === ">=") return "&ge;";
   return "=";
+}
+
+function formatVarHtml(index) {
+  return `X<sub>${index + 1}</sub>`;
+}
+
+function formatVarText(index) {
+  const subscripts = "₀₁₂₃₄₅₆₇₈₉";
+  const digits = String(index + 1)
+    .split("")
+    .map((digit) => subscripts[Number(digit)] || digit)
+    .join("");
+  return `X${digits}`;
 }
 
 function formatNumber(value) {
