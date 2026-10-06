@@ -15,9 +15,7 @@
   <body>
     <main class="container py-4">
       <h1 class="mb-3">Programação Linear - Método Gráfico e Simplex</h1>
-      <p class="text-muted">
-        Informe um problema de maximização com variáveis não negativas.
-      </p>
+      <p class="text-muted">Informe um problema com variáveis não negativas.</p>
 
       <section class="card mb-3">
         <div class="card-body">
@@ -31,6 +29,13 @@
               <input id="constraintCount" class="form-control" type="number" min="1" value="3" />
             </div>
             <div class="col-sm-3">
+              <label class="form-label" for="problemType">Tipo do problema</label>
+              <select id="problemType" class="form-select">
+                <option value="max" selected>Maximizar</option>
+                <option value="min">Minimizar</option>
+              </select>
+            </div>
+            <div class="col-sm-3">
               <button id="buildForm" class="btn btn-primary w-100">Gerar campos</button>
             </div>
           </div>
@@ -39,7 +44,7 @@
 
       <section class="card mb-3">
         <div class="card-body">
-          <h2 class="h5">Função objetivo (maximizar)</h2>
+          <h2 class="h5" id="objectiveTitle">Função objetivo (maximizar)</h2>
           <div id="objectiveContainer" class="table-responsive"></div>
         </div>
       </section>
@@ -51,14 +56,28 @@
         </div>
       </section>
 
-      <div class="d-flex gap-2 mb-3">
-        <button id="solveGraphical" class="btn btn-outline-primary">Resolver (Método Gráfico)</button>
-        <button id="solveSimplex" class="btn btn-success">Resolver (Simplex)</button>
-      </div>
+      <section class="card mb-3">
+        <div class="card-body">
+          <h2 class="h6">Métodos de resolução</h2>
+          <div class="d-flex flex-wrap gap-3 align-items-center mb-2">
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" id="methodGraphical" checked />
+              <label class="form-check-label" for="methodGraphical">Método Gráfico</label>
+            </div>
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" id="methodSimplex" checked />
+              <label class="form-check-label" for="methodSimplex">Simplex</label>
+            </div>
+            <button id="solveSelected" class="btn btn-success">Resolver métodos selecionados</button>
+          </div>
+          <div id="methodsHint" class="small text-muted"></div>
+        </div>
+      </section>
 
       <section class="card mb-3">
         <div class="card-body">
           <h2 class="h5">Resultado</h2>
+          <div id="problemSummary"></div>
           <div id="result" class="mb-3"></div>
           <canvas id="graphCanvas" width="900" height="500"></canvas>
           <div id="simplexTable" class="table-responsive mt-3"></div>

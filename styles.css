@@ -7,8 +7,27 @@ body {
   max-width: 100%;
   border: 1px solid #ced4da;
   background: #fff;
+  cursor: grab;
+}
+
+#graphCanvas:active {
+  cursor: grabbing;
 }
 
 .coeff-input {
   width: 90px;
+}
+
+.simplex-step {
+  background: #fff;
+}
+
+.pivot-cell {
+  background-color: #fff3cd;
+  font-weight: 600;
+}
+
+.z-row-cell {
+  background-color: #f8f9fa;
+  font-weight: 500;
 }

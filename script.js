@@ -1,17 +1,46 @@
 const varCountInput = document.getElementById("varCount");
 const constraintCountInput = document.getElementById("constraintCount");
+const problemTypeSelect = document.getElementById("problemType");
 const objectiveContainer = document.getElementById("objectiveContainer");
 const constraintsContainer = document.getElementById("constraintsContainer");
 const resultContainer = document.getElementById("result");
+const problemSummaryContainer = document.getElementById("problemSummary");
 const simplexTableContainer = document.getElementById("simplexTable");
+const methodGraphicalCheckbox = document.getElementById("methodGraphical");
+const methodSimplexCheckbox = document.getElementById("methodSimplex");
+const methodsHint = document.getElementById("methodsHint");
+const solveSelectedButton = document.getElementById("solveSelected");
+const objectiveTitle = document.getElementById("objectiveTitle");
 const canvas = document.getElementById("graphCanvas");
 const ctx = canvas.getContext("2d");
 
 const EPS = 1e-8;
 
+const graphState = {
+  data: null,
+  view: null,
+  dragging: false,
+  dragStart: null,
+  hoveredPoint: null,
+};
+
 document.getElementById("buildForm").addEventListener("click", buildForm);
-document.getElementById("solveGraphical").addEventListener("click", solveGraphical);
-document.getElementById("solveSimplex").addEventListener("click", solveSimplex);
+solveSelectedButton.addEventListener("click", solveSelectedMethods);
+
+[varCountInput, constraintCountInput, problemTypeSelect].forEach((el) => {
+  el.addEventListener("input", onProblemInputChange);
+  el.addEventListener("change", onProblemInputChange);
+});
+
+objectiveContainer.addEventListener("input", onProblemInputChange);
+constraintsContainer.addEventListener("input", onProblemInputChange);
+constraintsContainer.addEventListener("change", onProblemInputChange);
+
+canvas.addEventListener("wheel", onCanvasWheel, { passive: false });
+canvas.addEventListener("mousedown", onCanvasMouseDown);
+canvas.addEventListener("mousemove", onCanvasMouseMove);
+canvas.addEventListener("mouseup", onCanvasMouseUp);
+canvas.addEventListener("mouseleave", onCanvasMouseLeave);
 
 buildForm();
 
@@ -57,9 +86,32 @@ function buildForm() {
   constraintsHtml += "</tbody></table>";
   constraintsContainer.innerHTML = constraintsHtml;
 
+  methodGraphicalCheckbox.checked = true;
+  methodSimplexCheckbox.checked = true;
+
+  resetOutputs();
+  updateObjectiveTitle();
+  updateMethodAvailability();
+}
+
+function onProblemInputChange() {
+  updateObjectiveTitle();
+  updateMethodAvailability();
+}
+
+function resetOutputs() {
   resultContainer.innerHTML = "";
+  problemSummaryContainer.innerHTML = "";
   simplexTableContainer.innerHTML = "";
+  graphState.data = null;
+  graphState.view = null;
+  graphState.hoveredPoint = null;
   clearCanvas();
+}
+
+function updateObjectiveTitle() {
+  const mode = problemTypeSelect.value;
+  objectiveTitle.textContent = `Função objetivo (${mode === "min" ? "minimizar" : "maximizar"})`;
 }
 
 function readProblem() {
@@ -82,80 +134,155 @@ function readProblem() {
     constraints.push({ coeffs, sign, rhs });
   }
 
-  return { n, m, objective, constraints };
+  return { n, m, mode: problemTypeSelect.value, objective, constraints };
 }
 
-function solveGraphical() {
-  clearCanvas();
-  simplexTableContainer.innerHTML = "";
-
+function updateMethodAvailability() {
   const problem = readProblem();
-  if (problem.n !== 2) {
-    setResult("O método gráfico exige exatamente 2 variáveis de decisão.", "warning");
+
+  const graphEnabled = problem.n === 2;
+  const simplexPrepared = normalizeForSimplex(problem.constraints, problem.n);
+  const simplexEnabled = simplexPrepared.ok;
+
+  methodGraphicalCheckbox.disabled = !graphEnabled;
+  methodSimplexCheckbox.disabled = !simplexEnabled;
+
+  if (!graphEnabled) methodGraphicalCheckbox.checked = false;
+  if (!simplexEnabled) methodSimplexCheckbox.checked = false;
+
+  if (graphEnabled && simplexEnabled) {
+    methodsHint.textContent = "Você pode resolver com um método ou os dois ao mesmo tempo.";
+  } else {
+    const reasons = [];
+    if (!graphEnabled) reasons.push("Método Gráfico: exige exatamente 2 variáveis.");
+    if (!simplexEnabled) reasons.push(`Simplex: ${simplexPrepared.error}`);
+    methodsHint.textContent = reasons.join(" ");
+  }
+}
+
+function solveSelectedMethods() {
+  const problem = readProblem();
+  updateMethodAvailability();
+
+  const useGraph = methodGraphicalCheckbox.checked && !methodGraphicalCheckbox.disabled;
+  const useSimplex = methodSimplexCheckbox.checked && !methodSimplexCheckbox.disabled;
+
+  simplexTableContainer.innerHTML = "";
+  renderProblemSummary(problem);
+
+  if (!useGraph && !useSimplex) {
+    clearCanvas();
+    setResultMessages([
+      { message: "Selecione ao menos um método disponível para resolver.", type: "warning" },
+    ]);
     return;
   }
 
-  const graphConstraints = [...problem.constraints, { coeffs: [1, 0], sign: ">=", rhs: 0 }, { coeffs: [0, 1], sign: ">=", rhs: 0 }];
+  const messages = [];
+
+  if (useGraph) {
+    const graphResult = solveGraphical(problem);
+    messages.push({ message: graphResult.message, type: graphResult.type });
+  } else {
+    graphState.data = null;
+    graphState.view = null;
+    clearCanvas();
+  }
+
+  if (useSimplex) {
+    const simplexResult = solveSimplex(problem);
+    messages.push({ message: simplexResult.message, type: simplexResult.type });
+  } else {
+    simplexTableContainer.innerHTML = "";
+  }
+
+  setResultMessages(messages);
+}
+
+function renderProblemSummary(problem) {
+  const modeLabel = problem.mode === "min" ? "Minimização" : "Maximização";
+  const objectiveLabel =
+    problem.objective
+      .map((coef, i) => `${formatNumber(coef)}x${i + 1}`)
+      .join(" + ") || "0";
+
+  const constraintsLabel = problem.constraints
+    .map((c) => {
+      const expr = c.coeffs.map((coef, i) => `${formatNumber(coef)}x${i + 1}`).join(" + ");
+      return `<li>${expr} ${signToHtml(c.sign)} ${formatNumber(c.rhs)}</li>`;
+    })
+    .join("");
+
+  problemSummaryContainer.innerHTML = `
+    <div class='alert alert-light border mb-3'>
+      <strong>Tipo do problema:</strong> ${modeLabel}<br>
+      <strong>Função objetivo:</strong> ${problem.mode === "min" ? "Min Z =" : "Max Z ="} ${objectiveLabel}<br>
+      <strong>Resumo das restrições:</strong>
+      <ul class='mb-0 mt-1'>${constraintsLabel}</ul>
+    </div>
+  `;
+}
+
+function solveGraphical(problem) {
+  const graphConstraints = [
+    ...problem.constraints,
+    { coeffs: [1, 0], sign: ">=", rhs: 0 },
+    { coeffs: [0, 1], sign: ">=", rhs: 0 },
+  ];
 
   const points = collectCandidatePoints(graphConstraints);
   const feasible = points.filter((p) => isFeasible(p, graphConstraints));
+  const intersections = collectIntersections(graphConstraints);
 
   if (!feasible.length) {
-    setResult("Não foi encontrada região viável para as restrições informadas.", "danger");
-    drawGraph(graphConstraints, [], [], null);
-    return;
+    drawGraph(buildBoundaryLines(graphConstraints), [], [], null, intersections);
+    return {
+      type: "danger",
+      message: "Método Gráfico: não foi encontrada região viável para as restrições informadas.",
+    };
   }
 
   let best = null;
   feasible.forEach((p) => {
     const value = problem.objective[0] * p.x + problem.objective[1] * p.y;
-    if (!best || value > best.value + EPS) {
+    const improve = problem.mode === "min" ? value < best?.value - EPS : value > (best?.value ?? -Infinity) + EPS;
+    if (!best || improve) {
       best = { ...p, value };
     }
   });
 
   const hull = convexHull(feasible);
   const lines = buildBoundaryLines(graphConstraints);
-  drawGraph(lines, hull, feasible, best);
+  drawGraph(lines, hull, feasible, best, intersections);
 
-  const verticesHtml = hull
-    .map((p) => `(${p.x.toFixed(3)}, ${p.y.toFixed(3)})`)
-    .join(", ");
-
-  setResult(
-    `Solução ótima (gráfico): x1=${best.x.toFixed(4)}, x2=${best.y.toFixed(4)}, Z=${best.value.toFixed(4)}<br>Vértices viáveis: ${verticesHtml}`,
-    "success"
-  );
+  const verticesHtml = hull.map((p) => `(${p.x.toFixed(3)}, ${p.y.toFixed(3)})`).join(", ");
+  return {
+    type: "success",
+    message: `Método Gráfico: solução ótima x1=${best.x.toFixed(4)}, x2=${best.y.toFixed(4)}, Z=${best.value.toFixed(4)}.<br>Vértices viáveis: ${verticesHtml || "-"}`,
+  };
 }
 
-function solveSimplex() {
-  clearCanvas();
-  simplexTableContainer.innerHTML = "";
-
-  const problem = readProblem();
-  if (problem.n < 2) {
-    setResult("Informe ao menos 2 variáveis de decisão.", "warning");
-    return;
-  }
-
+function solveSimplex(problem) {
   const prepared = normalizeForSimplex(problem.constraints, problem.n);
   if (!prepared.ok) {
-    setResult(prepared.error, "danger");
-    return;
+    return { type: "danger", message: `Simplex: ${prepared.error}` };
   }
 
-  const simplex = runSimplex(problem.objective, prepared.constraints);
+  const simplexObjective = problem.mode === "min" ? problem.objective.map((v) => -v) : problem.objective.slice();
+  const simplex = runSimplex(simplexObjective, prepared.constraints);
   if (!simplex.ok) {
-    setResult(simplex.error, "danger");
-    return;
+    return { type: "danger", message: `Simplex: ${simplex.error}` };
   }
 
-  const solutionHtml = simplex.solution
-    .map((v, i) => `x${i + 1}=${v.toFixed(4)}`)
-    .join(", ");
+  const realValue = problem.mode === "min" ? -simplex.value : simplex.value;
+  const solutionHtml = simplex.solution.map((v, i) => `x${i + 1}=${v.toFixed(4)}`).join(", ");
 
-  setResult(`Solução ótima (Simplex): ${solutionHtml}, Z=${simplex.value.toFixed(4)}`, "success");
-  renderSimplexTable(simplex.tableau, problem.n, prepared.constraints.length);
+  renderSimplexTable(simplex.steps, problem.n, prepared.constraints.length, simplex.solution, realValue);
+
+  return {
+    type: "success",
+    message: `Simplex: solução ótima ${solutionHtml}, Z=${realValue.toFixed(4)}.`,
+  };
 }
 
 function normalizeForSimplex(constraints, n) {
@@ -167,7 +294,7 @@ function normalizeForSimplex(constraints, n) {
     let sign = c.sign;
 
     if (sign === "=") {
-      return { ok: false, error: "Para o Simplex desta versão, use apenas restrições com ≤ ou ≥." };
+      return { ok: false, error: "esta versão suporta apenas restrições com ≤ ou ≥." };
     }
 
     if (sign === ">=") {
@@ -181,12 +308,12 @@ function normalizeForSimplex(constraints, n) {
       rhs = -rhs;
       sign = sign === "<=" ? ">=" : "<=";
       if (sign !== "<=") {
-        return { ok: false, error: "Não foi possível normalizar as restrições para a forma padrão do Simplex." };
+        return { ok: false, error: "não foi possível normalizar as restrições para a forma padrão." };
       }
     }
 
     if (sign !== "<=") {
-      return { ok: false, error: "Para o Simplex desta versão, use apenas restrições que possam ser convertidas para ≤." };
+      return { ok: false, error: "as restrições precisam ser convertíveis para ≤." };
     }
 
     normalized.push({ coeffs, rhs });
@@ -215,6 +342,18 @@ function runSimplex(objective, constraints) {
     tableau[m][j] = -(objective[j] || 0);
   }
 
+  const steps = [
+    {
+      label: "Tabela inicial",
+      tableau: cloneTableau(tableau),
+      pivotRow: null,
+      pivotCol: null,
+      entering: null,
+      leaving: null,
+      value: tableau[m][cols - 1],
+    },
+  ];
+
   let guard = 0;
   while (guard < 1000) {
     guard++;
@@ -223,14 +362,27 @@ function runSimplex(objective, constraints) {
 
     const pivotRow = choosePivotRow(tableau, pivotCol, m, cols - 1);
     if (pivotRow === -1) {
-      return { ok: false, error: "Problema ilimitado (unbounded) para o método Simplex." };
+      return { ok: false, error: "problema ilimitado (unbounded)." };
     }
 
+    const entering = pivotCol < n ? `x${pivotCol + 1}` : `s${pivotCol - n + 1}`;
+    const leaving = `R${pivotRow + 1}`;
+
     pivot(tableau, pivotRow, pivotCol);
+
+    steps.push({
+      label: `Etapa ${steps.length}`,
+      tableau: cloneTableau(tableau),
+      pivotRow,
+      pivotCol,
+      entering,
+      leaving,
+      value: tableau[m][cols - 1],
+    });
   }
 
   if (guard >= 1000) {
-    return { ok: false, error: "Simplex excedeu o limite de iterações." };
+    return { ok: false, error: "excedeu o limite de iterações." };
   }
 
   const solution = Array(n).fill(0);
@@ -241,7 +393,7 @@ function runSimplex(objective, constraints) {
     }
   }
 
-  return { ok: true, solution, value: tableau[m][cols - 1], tableau };
+  return { ok: true, solution, value: tableau[m][cols - 1], tableau, steps };
 }
 
 function choosePivotColumn(objectiveRow) {
@@ -305,24 +457,64 @@ function getBasicRow(tableau, column, m) {
   return oneRow;
 }
 
-function renderSimplexTable(tableau, n, m) {
-  const cols = tableau[0].length;
-  let html = "<h3 class='h6'>Tabela final do Simplex</h3><table class='table table-bordered table-sm'><thead><tr><th></th>";
+function renderSimplexTable(steps, n, m, solution, value) {
+  const header = [
+    ...Array.from({ length: n }, (_, i) => `x${i + 1}`),
+    ...Array.from({ length: m }, (_, i) => `s${i + 1}`),
+    "b",
+  ];
 
-  for (let i = 0; i < n; i++) html += `<th>x${i + 1}</th>`;
-  for (let i = 0; i < m; i++) html += `<th>s${i + 1}</th>`;
-  html += "<th>b</th></tr></thead><tbody>";
+  const stepsHtml = steps
+    .map((step, index) => {
+      const rowsHtml = step.tableau
+        .map((row, rowIndex) => {
+          const rowLabel = rowIndex === step.tableau.length - 1 ? "Z" : `R${rowIndex + 1}`;
+          const cells = row
+            .map((valueCell, colIndex) => {
+              const isPivotCell = step.pivotRow === rowIndex && step.pivotCol === colIndex;
+              const classes = [isPivotCell ? "pivot-cell" : "", rowLabel === "Z" ? "z-row-cell" : ""]
+                .filter(Boolean)
+                .join(" ");
+              return `<td class='${classes}'>${valueCell.toFixed(4)}</td>`;
+            })
+            .join("");
+          return `<tr><th>${rowLabel}</th>${cells}</tr>`;
+        })
+        .join("");
 
-  for (let i = 0; i < tableau.length; i++) {
-    html += `<tr><th>${i === tableau.length - 1 ? "Z" : `R${i + 1}`}</th>`;
-    for (let j = 0; j < cols; j++) {
-      html += `<td>${tableau[i][j].toFixed(4)}</td>`;
-    }
-    html += "</tr>";
-  }
+      const stepResult =
+        index === 0
+          ? ""
+          : `<div class='small text-muted mb-2'>Entrou: <strong>${step.entering}</strong> | Saiu: <strong>${step.leaving}</strong> | Z parcial: <strong>${step.value.toFixed(4)}</strong></div>`;
 
-  html += "</tbody></table>";
-  simplexTableContainer.innerHTML = html;
+      return `
+        <div class='simplex-step mb-3 p-2 border rounded'>
+          <div class='d-flex justify-content-between align-items-center mb-2'>
+            <h3 class='h6 mb-0'>${step.label}</h3>
+            ${index === steps.length - 1 ? "<span class='badge text-bg-success'>Resultado final</span>" : ""}
+          </div>
+          ${stepResult}
+          <table class='table table-bordered table-sm mb-0'>
+            <thead><tr><th></th>${header.map((h) => `<th>${h}</th>`).join("")}</tr></thead>
+            <tbody>${rowsHtml}</tbody>
+          </table>
+        </div>
+      `;
+    })
+    .join("");
+
+  const finalVars = solution.map((v, i) => `x${i + 1}=${v.toFixed(4)}`).join(", ");
+  simplexTableContainer.innerHTML = `
+    <h3 class='h6'>Evolução do Simplex</h3>
+    ${stepsHtml}
+    <div class='alert alert-success mb-0'>
+      <strong>Resultado final:</strong> ${finalVars} | <strong>Z=${value.toFixed(4)}</strong>
+    </div>
+  `;
+}
+
+function cloneTableau(tableau) {
+  return tableau.map((row) => row.slice());
 }
 
 function collectCandidatePoints(constraints) {
@@ -342,6 +534,19 @@ function collectCandidatePoints(constraints) {
   });
 
   return uniquePoints(points.filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y)));
+}
+
+function collectIntersections(constraints) {
+  const points = [];
+  for (let i = 0; i < constraints.length; i++) {
+    for (let j = i + 1; j < constraints.length; j++) {
+      const p = intersection(constraints[i], constraints[j]);
+      if (p && p.x >= -EPS && p.y >= -EPS) {
+        points.push({ x: Math.max(0, p.x), y: Math.max(0, p.y) });
+      }
+    }
+  }
+  return uniquePoints(points);
 }
 
 function intersection(c1, c2) {
@@ -377,10 +582,7 @@ function uniquePoints(points) {
 function convexHull(points) {
   if (points.length <= 1) return points.slice();
 
-  const sorted = points
-    .slice()
-    .sort((a, b) => (a.x === b.x ? a.y - b.y : a.x - b.x));
-
+  const sorted = points.slice().sort((a, b) => (a.x === b.x ? a.y - b.y : a.x - b.x));
   const cross = (o, a, b) => (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
 
   const lower = [];
@@ -409,10 +611,17 @@ function buildBoundaryLines(constraints) {
   return constraints.map((c) => ({ coeffs: c.coeffs, rhs: c.rhs }));
 }
 
-function drawGraph(lines, hull, feasible, best) {
-  clearCanvas();
+function drawGraph(lines, hull, feasible, best, intersections) {
+  const bounds = computeBounds(lines, feasible, best, intersections);
 
-  const allPoints = [...feasible, ...(best ? [best] : [])];
+  graphState.data = { lines, hull, feasible, best, intersections, bounds };
+  graphState.view = { ...bounds };
+  graphState.hoveredPoint = null;
+
+  drawGraphFromState();
+}
+
+function computeBounds(lines, feasible, best, intersections) {
   let maxX = 10;
   let maxY = 10;
 
@@ -422,36 +631,36 @@ function drawGraph(lines, hull, feasible, best) {
     if (Math.abs(b) > EPS) maxY = Math.max(maxY, Math.abs(line.rhs / b));
   });
 
-  allPoints.forEach((p) => {
+  [...feasible, ...intersections, ...(best ? [best] : [])].forEach((p) => {
     maxX = Math.max(maxX, p.x);
     maxY = Math.max(maxY, p.y);
   });
 
-  maxX = Math.max(1, maxX * 1.2);
-  maxY = Math.max(1, maxY * 1.2);
+  return {
+    minX: 0,
+    maxX: Math.max(1, maxX * 1.2),
+    minY: 0,
+    maxY: Math.max(1, maxY * 1.2),
+  };
+}
 
-  const pad = 40;
+function drawGraphFromState() {
+  clearCanvas();
+  if (!graphState.data || !graphState.view) return;
+
+  const { lines, hull, feasible, best, intersections } = graphState.data;
+  const pad = 55;
   const w = canvas.width;
   const h = canvas.height;
 
   const toCanvas = (x, y) => {
-    const px = pad + (x / maxX) * (w - 2 * pad);
-    const py = h - pad - (y / maxY) * (h - 2 * pad);
+    const { minX, maxX, minY, maxY } = graphState.view;
+    const px = pad + ((x - minX) / (maxX - minX)) * (w - 2 * pad);
+    const py = h - pad - ((y - minY) / (maxY - minY)) * (h - 2 * pad);
     return { px, py };
   };
 
-  ctx.strokeStyle = "#6c757d";
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(pad, h - pad);
-  ctx.lineTo(w - pad, h - pad);
-  ctx.moveTo(pad, h - pad);
-  ctx.lineTo(pad, pad);
-  ctx.stroke();
-
-  ctx.fillStyle = "#6c757d";
-  ctx.fillText("x", w - pad + 8, h - pad + 4);
-  ctx.fillText("y", pad - 8, pad - 8);
+  drawAxes(toCanvas, pad, w, h);
 
   const colors = ["#0d6efd", "#198754", "#dc3545", "#fd7e14", "#6f42c1", "#20c997"];
   lines.forEach((line, idx) => {
@@ -460,11 +669,13 @@ function drawGraph(lines, hull, feasible, best) {
 
     let p1;
     let p2;
+    const { minX, maxX, minY, maxY } = graphState.view;
+
     if (Math.abs(b) > EPS) {
-      p1 = { x: 0, y: line.rhs / b };
+      p1 = { x: minX, y: (line.rhs - a * minX) / b };
       p2 = { x: maxX, y: (line.rhs - a * maxX) / b };
     } else if (Math.abs(a) > EPS) {
-      p1 = { x: line.rhs / a, y: 0 };
+      p1 = { x: line.rhs / a, y: minY };
       p2 = { x: line.rhs / a, y: maxY };
     } else {
       return;
@@ -474,6 +685,7 @@ function drawGraph(lines, hull, feasible, best) {
     const c2 = toCanvas(p2.x, p2.y);
 
     ctx.strokeStyle = color;
+    ctx.lineWidth = 1.5;
     ctx.beginPath();
     ctx.moveTo(c1.px, c1.py);
     ctx.lineTo(c2.px, c2.py);
@@ -481,7 +693,7 @@ function drawGraph(lines, hull, feasible, best) {
   });
 
   if (hull.length >= 3) {
-    ctx.fillStyle = "rgba(13, 110, 253, 0.2)";
+    ctx.fillStyle = "rgba(13, 110, 253, 0.15)";
     ctx.beginPath();
     hull.forEach((p, i) => {
       const c = toCanvas(p.x, p.y);
@@ -492,30 +704,236 @@ function drawGraph(lines, hull, feasible, best) {
     ctx.fill();
   }
 
-  feasible.forEach((p) => {
-    const c = toCanvas(p.x, p.y);
-    ctx.fillStyle = "#0d6efd";
-    ctx.beginPath();
-    ctx.arc(c.px, c.py, 4, 0, Math.PI * 2);
-    ctx.fill();
-  });
+  intersections.forEach((p) => drawPointWithLabel(p, toCanvas, "#6c757d", 3, true));
+  feasible.forEach((p) => drawPointWithLabel(p, toCanvas, "#0d6efd", 4, false));
 
   if (best) {
-    const c = toCanvas(best.x, best.y);
-    ctx.fillStyle = "#dc3545";
-    ctx.beginPath();
-    ctx.arc(c.px, c.py, 6, 0, Math.PI * 2);
-    ctx.fill();
-
-    ctx.fillStyle = "#212529";
-    ctx.fillText(`Ótimo (${best.x.toFixed(2)}, ${best.y.toFixed(2)})`, c.px + 8, c.py - 8);
+    drawPointWithLabel(best, toCanvas, "#dc3545", 6, true, `Ótimo (${best.x.toFixed(2)}, ${best.y.toFixed(2)})`);
   }
+
+  if (graphState.hoveredPoint) {
+    const c = toCanvas(graphState.hoveredPoint.x, graphState.hoveredPoint.y);
+    ctx.fillStyle = "#212529";
+    ctx.fillText(`(${graphState.hoveredPoint.x.toFixed(3)}, ${graphState.hoveredPoint.y.toFixed(3)})`, c.px + 8, c.py - 12);
+  }
+}
+
+function drawAxes(toCanvas, pad, w, h) {
+  const { minX, maxX, minY, maxY } = graphState.view;
+
+  const axisX = minY <= 0 && maxY >= 0 ? toCanvas(0, 0).py : h - pad;
+  const axisY = minX <= 0 && maxX >= 0 ? toCanvas(0, 0).px : pad;
+
+  const xStep = niceStep((maxX - minX) / 8);
+  const yStep = niceStep((maxY - minY) / 8);
+
+  ctx.strokeStyle = "#e9ecef";
+  ctx.fillStyle = "#6c757d";
+  ctx.lineWidth = 1;
+
+  for (let x = Math.ceil(minX / xStep) * xStep; x <= maxX + EPS; x += xStep) {
+    const p = toCanvas(x, minY);
+    ctx.beginPath();
+    ctx.moveTo(p.px, pad);
+    ctx.lineTo(p.px, h - pad);
+    ctx.stroke();
+
+    ctx.fillStyle = "#6c757d";
+    ctx.fillText(x.toFixed(2), p.px - 10, axisX + 16);
+  }
+
+  for (let y = Math.ceil(minY / yStep) * yStep; y <= maxY + EPS; y += yStep) {
+    const p = toCanvas(minX, y);
+    ctx.beginPath();
+    ctx.moveTo(pad, p.py);
+    ctx.lineTo(w - pad, p.py);
+    ctx.stroke();
+
+    ctx.fillStyle = "#6c757d";
+    ctx.fillText(y.toFixed(2), axisY - 35, p.py + 4);
+  }
+
+  ctx.strokeStyle = "#343a40";
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(pad, axisX);
+  ctx.lineTo(w - pad, axisX);
+  ctx.moveTo(axisY, h - pad);
+  ctx.lineTo(axisY, pad);
+  ctx.stroke();
+
+  ctx.fillStyle = "#212529";
+  ctx.fillText("x", w - pad + 8, axisX + 4);
+  ctx.fillText("y", axisY - 8, pad - 8);
+}
+
+function drawPointWithLabel(point, toCanvas, color, radius, showCoords, customLabel = null) {
+  const c = toCanvas(point.x, point.y);
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.arc(c.px, c.py, radius, 0, Math.PI * 2);
+  ctx.fill();
+
+  if (showCoords) {
+    ctx.fillStyle = "#212529";
+    ctx.fillText(customLabel || `(${point.x.toFixed(2)}, ${point.y.toFixed(2)})`, c.px + 6, c.py - 6);
+  }
+}
+
+function onCanvasWheel(event) {
+  if (!graphState.data || !graphState.view) return;
+  event.preventDefault();
+
+  const zoomFactor = event.deltaY < 0 ? 0.9 : 1.1;
+  const mouse = canvasPointToLogical(event.offsetX, event.offsetY);
+  const { minX, maxX, minY, maxY } = graphState.view;
+
+  graphState.view = {
+    minX: mouse.x - (mouse.x - minX) * zoomFactor,
+    maxX: mouse.x + (maxX - mouse.x) * zoomFactor,
+    minY: mouse.y - (mouse.y - minY) * zoomFactor,
+    maxY: mouse.y + (maxY - mouse.y) * zoomFactor,
+  };
+
+  clampGraphView();
+  drawGraphFromState();
+}
+
+function onCanvasMouseDown(event) {
+  if (!graphState.data || !graphState.view) return;
+  graphState.dragging = true;
+  graphState.dragStart = {
+    x: event.offsetX,
+    y: event.offsetY,
+    view: { ...graphState.view },
+  };
+}
+
+function onCanvasMouseMove(event) {
+  if (!graphState.data || !graphState.view) return;
+
+  if (graphState.dragging && graphState.dragStart) {
+    const dx = event.offsetX - graphState.dragStart.x;
+    const dy = event.offsetY - graphState.dragStart.y;
+
+    const { minX, maxX, minY, maxY } = graphState.dragStart.view;
+    const scaleX = (maxX - minX) / (canvas.width - 110);
+    const scaleY = (maxY - minY) / (canvas.height - 110);
+
+    graphState.view = {
+      minX: minX - dx * scaleX,
+      maxX: maxX - dx * scaleX,
+      minY: minY + dy * scaleY,
+      maxY: maxY + dy * scaleY,
+    };
+    clampGraphView();
+    drawGraphFromState();
+    return;
+  }
+
+  const points = [...graphState.data.intersections, ...graphState.data.feasible, ...(graphState.data.best ? [graphState.data.best] : [])];
+  graphState.hoveredPoint = findNearbyPoint(event.offsetX, event.offsetY, points);
+  drawGraphFromState();
+}
+
+function onCanvasMouseUp() {
+  graphState.dragging = false;
+  graphState.dragStart = null;
+}
+
+function onCanvasMouseLeave() {
+  graphState.dragging = false;
+  graphState.dragStart = null;
+  graphState.hoveredPoint = null;
+  drawGraphFromState();
+}
+
+function findNearbyPoint(px, py, points) {
+  let nearest = null;
+  let bestDist = Infinity;
+
+  points.forEach((p) => {
+    const c = logicalToCanvasPoint(p.x, p.y);
+    const dist = Math.hypot(c.px - px, c.py - py);
+    if (dist < 10 && dist < bestDist) {
+      bestDist = dist;
+      nearest = p;
+    }
+  });
+
+  return nearest;
+}
+
+function logicalToCanvasPoint(x, y) {
+  const { minX, maxX, minY, maxY } = graphState.view;
+  const pad = 55;
+  const px = pad + ((x - minX) / (maxX - minX)) * (canvas.width - 2 * pad);
+  const py = canvas.height - pad - ((y - minY) / (maxY - minY)) * (canvas.height - 2 * pad);
+  return { px, py };
+}
+
+function canvasPointToLogical(px, py) {
+  const { minX, maxX, minY, maxY } = graphState.view;
+  const pad = 55;
+  const x = minX + ((px - pad) / (canvas.width - 2 * pad)) * (maxX - minX);
+  const y = minY + ((canvas.height - pad - py) / (canvas.height - 2 * pad)) * (maxY - minY);
+  return { x, y };
+}
+
+function clampGraphView() {
+  if (!graphState.data || !graphState.view) return;
+  const bounds = graphState.data.bounds;
+
+  if (graphState.view.maxX - graphState.view.minX < 0.2) {
+    const midX = (graphState.view.maxX + graphState.view.minX) / 2;
+    graphState.view.minX = midX - 0.1;
+    graphState.view.maxX = midX + 0.1;
+  }
+
+  if (graphState.view.maxY - graphState.view.minY < 0.2) {
+    const midY = (graphState.view.maxY + graphState.view.minY) / 2;
+    graphState.view.minY = midY - 0.1;
+    graphState.view.maxY = midY + 0.1;
+  }
+
+  if (graphState.view.minX < -bounds.maxX * 0.25) {
+    const shift = -bounds.maxX * 0.25 - graphState.view.minX;
+    graphState.view.minX += shift;
+    graphState.view.maxX += shift;
+  }
+  if (graphState.view.minY < -bounds.maxY * 0.25) {
+    const shift = -bounds.maxY * 0.25 - graphState.view.minY;
+    graphState.view.minY += shift;
+    graphState.view.maxY += shift;
+  }
+}
+
+function niceStep(roughStep) {
+  const power = Math.pow(10, Math.floor(Math.log10(roughStep || 1)));
+  const fraction = roughStep / power;
+  if (fraction <= 1) return 1 * power;
+  if (fraction <= 2) return 2 * power;
+  if (fraction <= 5) return 5 * power;
+  return 10 * power;
 }
 
 function clearCanvas() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 }
 
-function setResult(message, type) {
-  resultContainer.innerHTML = `<div class='alert alert-${type} mb-0'>${message}</div>`;
+function setResultMessages(messages) {
+  resultContainer.innerHTML = messages
+    .map((entry) => `<div class='alert alert-${entry.type} mb-2'>${entry.message}</div>`)
+    .join("");
+}
+
+function signToHtml(sign) {
+  if (sign === "<=") return "&le;";
+  if (sign === ">=") return "&ge;";
+  return "=";
+}
+
+function formatNumber(value) {
+  if (Number.isInteger(value)) return String(value);
+  return Number(value).toFixed(2).replace(/\.00$/, "");
 }
