@@ -1,0 +1,57 @@
+body {
+  background-color: #f8f9fa;
+}
+
+#graficoCanvas {
+  width: 100%;
+  max-width: 100%;
+  border: 1px solid #ced4da;
+  background: #fff;
+  cursor: grab;
+}
+
+#graficoCanvas:active {
+  cursor: grabbing;
+}
+
+.coeff-input {
+  width: 90px;
+}
+
+.simplex-step {
+  background: #fff;
+}
+
+.pivot-cell {
+  background-color: #fff3cd;
+  font-weight: 600;
+}
+
+.pivot-row-cell {
+  background-color: #e7f1ff;
+}
+
+.pivot-col-cell {
+  background-color: #e8f7ef;
+}
+
+.z-row-cell {
+  background-color: #f8f9fa;
+  font-weight: 500;
+}
+
+.final-z-row td,
+.final-z-row th {
+  background-color: #d1e7dd;
+  font-weight: 600;
+}
+
+.final-resultado-cell {
+  background-color: #198754 !important;
+  color: #fff;
+  font-weight: 700;
+}
+
+.best-vertex-row td {
+  font-weight: 600;
+}
